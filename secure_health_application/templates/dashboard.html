@@ -1,4 +1,3 @@
-
 {% extends "base.html" %}
 {% block body_class %}dash-bg{% endblock %}
 {% block title %}Dashboard · Secure Health Application{% endblock %}
@@ -94,21 +93,43 @@
   <p style="color:red; text-align:center;">No results found.</p>
 {% else %}
 
+<!-- I'm checking once if the AI helper attached an AI message column -->
+{% set has_ai = patients and ('ai_message' in patients[0]) %}
+
 <!-- (an ai assisted code) I'm showing the first 50 patient records in a simple table -->
 <table border="1" cellspacing="0" cellpadding="5">
   <thead>
     <tr>
       {% for col in patients[0].keys() %}
-        <th>{{ col }}</th>
+        {% if col != 'ai_message' %}
+          <th>{{ col }}</th>
+        {% endif %}
       {% endfor %}
+      {% if has_ai %}
+        <!-- I'm adding a clear admin-only AI column heading -->
+        <th>AI stroke risk (admin-only)</th>
+      {% endif %}
     </tr>
   </thead>
   <tbody>
     {% for row in patients %}
       <tr>
-        {% for value in row.values() %}
-          <td>{{ value }}</td>
+        {% for col, value in row.items() %}
+          {% if col != 'ai_message' %}
+            <td>{{ value }}</td>
+          {% endif %}
         {% endfor %}
+
+        {% if has_ai %}
+          <!-- I'm showing the friendly AI risk message only if it exists for this row -->
+          <td>
+            {% if row.ai_message %}
+              {{ row.ai_message }}
+            {% else %}
+              —  <!-- I'm using a dash where no AI prediction was made -->
+            {% endif %}
+          </td>
+        {% endif %}
       </tr>
     {% endfor %}
   </tbody>

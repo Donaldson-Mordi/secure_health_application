@@ -112,6 +112,10 @@ from flask_wtf import CSRFProtect
 # I'm importing my login form from forms.py.
 from forms import LoginForm
 
+# I'm importing tools to load and run my AI model.
+import joblib
+import numpy as np
+
 # --- App setup (I'm creating my Flask app) ---
 app = Flask(__name__)
 
@@ -155,6 +159,16 @@ class User(db.Model):
 mongo_client = MongoClient("mongodb://localhost:27017/")
 mongo_db = mongo_client["secure_health_db"]
 patients_collection = mongo_db["patients"]
+
+# --- AI model loading (I'm loading my saved stroke risk model) ---
+try:
+    # I'm loading the trained Logistic Regression model from disk.
+    stroke_model = joblib.load("stroke_model.pkl")
+    print("✅ Stroke model loaded successfully.")
+except Exception as e:
+    # If anything goes wrong, I'm falling back safely with no model.
+    print("⚠ Could not load stroke_model.pkl:", e)
+    stroke_model = None
 
 # --- Tiny login rate limiter to stop brute-force attempts ---
 FAIL_WINDOW = 60  # I'm checking login attempts within this time frame (seconds).
@@ -213,6 +227,54 @@ def patient_id_from_username():
         return int((session.get("user") or "").split("-", 1)[1])
     except Exception:
         return None
+    
+def build_stroke_risk_message(doc):
+    """
+    I'm taking ONE patient record from MongoDB and asking the AI model
+    for a stroke-risk prediction, then turning it into a human-friendly message.
+    """
+    # If the model failed to load, I quietly return nothing.
+    if stroke_model is None:
+        return None
+
+    try:
+        # I'm pulling the same features I used during training.
+        age = float(doc.get("age"))
+        htn = int(doc.get("hypertension"))
+        hd = int(doc.get("heart_disease"))
+        glu = float(doc.get("avg_glucose_level"))
+        bmi = doc.get("bmi")
+
+        # If BMI is missing, I can't safely predict.
+        if bmi in (None, "", "N/A"):
+            return None
+        bmi = float(bmi)
+    except (TypeError, ValueError):
+        # If any value is weird or missing, I skip AI for this patient.
+        return None
+
+    # I'm building a tiny 2D array for the model: [[age, htn, hd, glu, bmi]]
+    X = np.array([[age, htn, hd, glu, bmi]])
+
+    # I'm getting the probability that stroke = 1 from the model.
+    proba = stroke_model.predict_proba(X)[0][1]
+    confidence = round(proba * 100)
+
+    # I'm mapping the probability into LOW / MEDIUM / HIGH risk.
+    if proba < 0.33:
+        level = "LOW"
+    elif proba < 0.66:
+        level = "MEDIUM"
+    else:
+        level = "HIGH"
+
+    # This is the final message the admin will see in the UI later.
+    msg = (
+        f"AI Stroke Risk: {level} ({confidence}% confidence) – "
+        f"Doctor review required before informing patient."
+    )
+
+    return msg
 
 # --- Routes start here ---
 @app.route("/")
@@ -395,6 +457,21 @@ def dashboard():
     for p in patients:
         if "age" in p and isinstance(p["age"], (float, int)) and float(p["age"]).is_integer():
             p["age"] = int(p["age"])
+
+    # --- AI stroke risk (admin only, using my Logistic Regression model) ---
+    # I'm only doing this extra AI work if:
+    # 1) the logged-in user is the admin, and
+    # 2) the stroke_model actually loaded correctly at startup.
+    if is_admin() and stroke_model is not None:
+        for p in patients:
+            # I'm asking my helper to build a human-friendly AI message for this patient.
+            msg = build_stroke_risk_message(p)
+            # If the helper returns something (not None), I attach it to the patient dict.
+            p["ai_risk"] = msg
+    else:
+        # For non-admins, or if the model failed, I make sure there is no AI message at all.
+        for p in patients:
+            p["ai_risk"] = None
 
     total_patients = patients_collection.count_documents(query)
     total_pages = max((total_patients + per_page - 1) // per_page, 1)
