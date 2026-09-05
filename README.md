@@ -1,4 +1,3 @@
-# com7033-assignment-DonaldsonLTU
 Secure Health Application
 
 This is a secure medical Application that uses databases and Al, built with Flask, SQLite, MongoDB, and modern security tools and ethical practices.
